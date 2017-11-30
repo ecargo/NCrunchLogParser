@@ -1,0 +1,219 @@
+---
+title: "NCrunch build log analysis"
+output: html_document
+---
+
+```{r setup, include = F}
+knitr::opts_chunk$set(echo = F)
+```
+
+```{r loadLibraries, message = F}
+if (!require("checkpoint")) install.packages("checkpoint")
+checkpoint("2017-11-20")
+require(tidyverse)
+require(magrittr)
+require(lubridate)
+require(here)
+```
+
+```{r gatherLogData, warning = F}
+concurrencyLevels <- c("Serial", "Resource", "None")
+
+loadLogEntries <- function() {
+  logFile <- dir(here("Data"), pattern = "20*", full.names = T) %>% sort() %>% tail(1)
+  lines <- tibble(Line = readLines(logFile))
+
+  lines %>%
+    mutate(
+      LogFileLine = 1:n(),
+      IsNewLogEntry = grepl("^\\[\\d{2}:\\d{2}:\\d{2}\\.\\d{0,4}-", Line) | grepl("^ENGINE - ", Line) | grepl("^Process \\d+: \\d{2}:\\d{2}:\\d{2}\\.\\d{0,4}", Line),
+      LogIndex = cumsum(ifelse(IsNewLogEntry, 1, 0))
+    ) %>%
+    group_by(LogIndex) %>%
+    summarise(
+      LogEntry = str_c(Line, collapse = "\n"),
+      LogFileLine = min(LogFileLine)
+    ) %>%
+    mutate(
+      SecondsSinceStart = LogEntry %>% str_match("\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,4})?") %>% hms() %>% seconds() %>% as.numeric(),
+      SecondsSinceStart = SecondsSinceStart - min(SecondsSinceStart, na.rm = T)
+    ) %>%
+    mutate (
+      ProcessId = LogEntry %>%
+        str_match("([Pp]rocess (\\d+)[ :]|Process '[a-f0-9]+' with id (\\d+)|Process ID '(\\d+)')") %>%
+        as.tibble() %>%
+        mutate(
+          ProcessId = pmax(V3, V4, V5, na.rm = T)
+        ) %>%
+        .$ProcessId,
+      ProcessId = as.factor(ProcessId)
+    )
+}
+
+logEntries <- loadLogEntries()
+```
+
+```{r gatherTestResultData}
+loadTestDetails <- function() {
+  lines <- read_csv(here("Data/NCrunchTestsWindow.csv"), col_types = cols(
+    Name = col_character(),
+    Status = col_character(),
+    `Last Execution Time` = col_character(),
+    Server = col_character(),
+    `Exclusively Used Resources` = col_character()
+  ))
+
+  lines %>%
+    rename(
+      "Resources" = "Exclusively Used Resources"
+    ) %>%
+    mutate(
+      ConcurrencyPenalty = factor(
+        levels = concurrencyLevels,
+        ordered = T,
+        ifelse(
+          is.na(Resources),
+          "None",
+          ifelse(
+            Resources == "Test Runner",
+            "Serial",
+            "Resource"
+          )
+        )
+      )
+    )
+}
+
+testDetails <- loadTestDetails()
+```
+
+```{r manipulateDataForPlotting}
+unescapeXmlNotVectorised <- function(str) {
+  xml2::xml_text(xml2::read_xml(paste0("<x>", str, "</x>")))
+}
+
+unescapeXmlNotVectorised <- Vectorize(unescapeXmlNotVectorised, "str")
+
+allDetails <- logEntries %>%
+  filter(grepl(" - NUnit3 <test-case id=", LogEntry)) %>%
+  mutate(
+    #parse via regex because a lot are not valid XML since stack straces span multiple log lines, which I haven't tried to recombine
+    StartedAt = with_tz(ymd_hms(str_match(LogEntry, "start-time=\"([^\"]+)\"")[,2]), tzone = "Pacific/Auckland"),
+    EndedAt = with_tz(ymd_hms(str_match(LogEntry, "end-time=\"([^\"]+)\"")[,2]), tzone = "Pacific/Auckland"),
+    FullName = as.character(unescapeXmlNotVectorised(str_match(LogEntry, "fullname=\"([^\"]+)\"")[,2])),
+    MethodName = str_match(LogEntry, "methodname=\"([^\"]+)\"")[,2],
+    ClassName = str_match(LogEntry, "classname=\"([^\"]+)\"")[,2],
+    Result = as.factor(str_match(LogEntry, "result=\"([^\"]+)\"")[,2]),
+    Label = str_match(LogEntry, "label=\"([^\"]+)\"")[,2],
+    DurationSeconds = as.numeric(str_match(LogEntry, "duration=\"([0-9\\.]+)\"")[,2]),
+    TestId = as.factor(str_match(LogEntry, "id=\"([0-9\\.]+)\"")[,2]),
+    UnambiguousTestName = paste0(FullName, ">", MethodName)
+  ) %>%
+  left_join(testDetails, c(FullName = "Full Test Name")) %>%
+  filter(!is.na(LogIndex))
+
+serialTestRunning <- allDetails %>%
+  filter(ConcurrencyPenalty == "Serial") %>%
+  select(ConcurrencyPenalty, StartedAt, EndedAt)
+
+testRunLineSegments <- (function() {
+  allDetails %>%
+    select(ProcessId, StartedAt, EndedAt, LogIndex, ConcurrencyPenalty) %>%
+    gather(Event, OccurredAt, -ProcessId, -LogIndex, -ConcurrencyPenalty) %>%
+    arrange(OccurredAt, LogIndex, desc(Event)) %>%
+    mutate(
+      TestStarted = ifelse(Event == "StartedAt", 1, -1),
+      ResourceTestStarted = ifelse(ConcurrencyPenalty %in% "Resource", ifelse(Event == "StartedAt", 1, -1), 0),
+      SerialTestStarted = ifelse(ConcurrencyPenalty %in% "Serial", ifelse(Event == "StartedAt", 1, -1), 0),
+      ConcurrentTests = cumsum(TestStarted),
+      RunningResourceTests = cumsum(ResourceTestStarted),
+      RunningSerialTests = cumsum(SerialTestStarted),
+      EndedAt = c(tail(OccurredAt, -1), as.POSIXct(NA)),
+      ConcurrencyPenalty = factor(ifelse(RunningSerialTests > 0, "Serial", ifelse(RunningResourceTests > 0, "Resource", "None")), levels = concurrencyLevels, ordered = T)
+    ) %>%
+    filter(
+      !is.na(EndedAt)
+    ) %>%
+    select(
+      OccurredAt,
+      EndedAt,
+      ConcurrentTests,
+      ConcurrencyPenalty
+    ) %>%
+    rename(
+      StartedAt = OccurredAt
+    )
+})()
+
+testsWithDuplicateRuns <- allDetails %>%
+  group_by(UnambiguousTestName) %>%
+  mutate (Count = n()) %>%
+  filter(Count > 1) %>%
+  select(UnambiguousTestName)
+
+duplicatedTestRuns <- allDetails %>%
+  filter(UnambiguousTestName %in% testsWithDuplicateRuns$UnambiguousTestName) %>%
+  group_by(UnambiguousTestName) %>%
+  mutate(
+    RunInstance = row_number()
+  ) %>%
+  ungroup()
+duplicatedTestRuns$RunInstance <- as.factor(duplicatedTestRuns$RunInstance)
+```
+
+```{r calculateSummaryStatistics}
+testRunStart <- (allDetails %>% top_n(-1, StartedAt))$StartedAt
+testRunEnd <- (allDetails %>% top_n(1, EndedAt))$EndedAt
+testRunDuration <- as.duration(testRunEnd - testRunStart)
+totalTestDuration <- as.duration(sum(allDetails$DurationSeconds))
+```
+
+The first test started executing at `r testRunStart` and the last completed at `r testRunEnd`, which means that the whole run took `r as.character(testRunDuration)`. The sum of the times taken to execute each of the individual tests was `r as.character(totalTestDuration)`.
+
+```{r plotSwimlanes, fig.height = 15, fig.width = 10}
+ggplot() +
+  geom_segment(data = allDetails, aes(x = ProcessId, y = StartedAt, xend = ProcessId, yend = EndedAt, colour = ConcurrencyPenalty), size = 1) +
+  geom_rect(data = serialTestRunning, aes(xmin = -Inf, ymin = StartedAt, xmax = Inf, ymax = EndedAt), alpha = 0.1, fill = "red") +
+  theme(axis.text.x = element_blank()) +
+  labs(
+    title = "NCrunch executing tests over time",
+    x = "Process ID",
+    y = "Time of day"
+  ) +
+  theme(legend.position="bottom")
+```
+```{r plotConcurrentTests, fig.height = 3, fig.width = 10}
+ggplot() +
+  geom_segment(data = testRunLineSegments, aes(x = StartedAt, y = ConcurrentTests, xend = EndedAt, yend = ConcurrentTests, colour = ConcurrencyPenalty), size = 3) +
+  geom_rect(data = serialTestRunning, aes(xmin = StartedAt, ymin = -Inf, xmax = EndedAt, ymax = Inf), alpha = 0.1, fill = "red") +
+  labs(
+    title = "Concurrently executing tests",
+    x = "Time of day",
+    y = "Concurrent tests",
+    colour = "Maximum concurrency penalty imposed by NCrunch attributes"
+  ) +
+  theme(legend.position="bottom")
+```
+
+# Repeated tests?
+
+```{r repeatedTestPlot, fig.height = 10, fig.width = 10}
+if(nrow(duplicatedTestRuns) == 0) {
+  cat("There don't appear to be any duplicated tests.")
+} else {
+  plot <- ggplot() +
+      geom_segment(data = duplicatedTestRuns, aes(x = StartedAt, y = UnambiguousTestName, xend = EndedAt, yend = UnambiguousTestName, colour = RunInstance), size = 1) +
+    geom_rect(data = serialTestRunning, aes(xmin = StartedAt, ymin = -Inf, xmax = EndedAt, ymax = Inf), alpha = 0.1, fill = "red") +
+    labs(
+      title = "Tests that appear to be run more than once",
+      x = "Time of day",
+      y = "Test"
+    ) +
+    theme(
+      legend.position="bottom",
+      axis.text.y = element_blank()
+    )
+  cat("Some tests appear to be executed more than once.")
+  print(plot)
+}
+```
