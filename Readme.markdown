@@ -4,6 +4,9 @@
 
 This R code scans log files output either via the Visual Studio GUI or the NCrunch.exe console application, and allows you to visualise whether tests are being run concurrently or not.
 
+You can see a sample here:
+* [Sample output in markdown format](./Sample/Readme.markdown).
+
 # Usage
 
 Currently, requires manual interaction. Ideally, more of this would be automated at some stage.
