@@ -37,7 +37,7 @@ You can run the tests in the Visual Studio GUI or via the NCrunch.exe console ap
 ### 3.1 Running tests via the Visual Studio GUI
 
 1. Make sure your solution is up-to-date and built.
-2. Configure NCrunch to output logs with "Detailed" verbosity to the NCrunch Diagnostic Visual Studio output window.
+2. Configure NCrunch to output logs with "Detailed" or "Medium" verbosity to the NCrunch Diagnostic Visual Studio output window.
 3. Clear the NCrunch Diagnostic Output menu.
 4. Run the resynchronise NCrunch task for a complete test run (make sure that the NCrunch engine mode is set to "Run all tests automatically"), or run the subset of tests that you want to view the performance of.
 5. Wait for the test run to complete.
