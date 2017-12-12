@@ -14,6 +14,7 @@ require(tidyverse)
 require(magrittr)
 require(lubridate)
 require(here)
+require(glue)
 ```
 
 ```{r gatherLogData, warning = F}
@@ -21,6 +22,7 @@ concurrencyLevels <- c("Serial", "Resource", "None")
 
 loadLogEntries <- function() {
   logFile <- dir(here("Data"), pattern = "20*", full.names = T) %>% sort() %>% tail(1)
+  cat(glue("Analysing log {logFile}..."))
   lines <- tibble(Line = readLines(logFile))
 
   lines %>%
