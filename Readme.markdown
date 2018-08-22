@@ -12,10 +12,10 @@ You can see a sample here:
 Currently, requires manual interaction. Ideally, more of this would be automated at some stage.
 
 ## 1. Install prerequisites
-Install R and RStudio if you don't already have them. This step assumes that you have [Chocolatey](https://chocolatey.org/install) installed.
+Install NCrunch Console, R, and RStudio if you don't already have them. This step assumes that you have [Chocolatey](https://chocolatey.org/install) installed.
 
 ```powershell
-choco install -y microsoft-r-open r.studio
+choco install -y microsoft-r-open r.studio ncrunch-console
 ```
 
 Install the latest NCrunch for Visual Studio.
