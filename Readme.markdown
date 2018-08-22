@@ -49,7 +49,7 @@ You can run the tests in the Visual Studio GUI or via the NCrunch.exe console ap
 1. Make sure your solution is up-to-date and built.
 2. Run the following PowerShell command from within the root of this cloned repository, updating the `<SolutionPath>` to the absolute path to your Visual Studio solution:
     ```powershell
-    & "C:\Program Files (x86)\Remco Software\NCrunch Console Tool\NCrunch.exe" <SolutionPath> -LogVerbosity Detailed -MaxNumberOfProcessingThreads 5 | Out-File -Encoding UTF8 "Data\$(Get-Date -Format "yyyy-MM-dd HH-mm-ss") NCrunchLog - console.txt"
+    & "C:\Program Files (x86)\Remco Software\NCrunch Console Tool\NCrunch.exe" <SolutionPath> -LogVerbosity Detailed -MaxNumberOfProcessingThreads 5 -NCrunchCacheStoragePath "$((pwd).Path)\Data\Storage" | Out-File -Encoding UTF8 "Data\$(Get-Date -Format "yyyy-MM-dd HH-mm-ss") NCrunchLog - console.txt"
     ```
 
 ## 4. Analyse log files
