@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = F)
 
 ```{r loadLibraries, message = F}
 if (!require("checkpoint")) install.packages("checkpoint")
-checkpoint("2017-11-20")
+checkpoint("2018-08-01")
 require(tidyverse)
 require(magrittr)
 require(lubridate)
@@ -21,7 +21,7 @@ require(glue)
 concurrencyLevels <- c("Serial", "Resource", "None")
 
 loadLogEntries <- function() {
-  logFile <- dir(here("Data"), pattern = "20*", full.names = T) %>% sort() %>% tail(1)
+  logFile <- dir(here::here("Data"), pattern = "20*", full.names = T) %>% sort() %>% tail(1)
   cat(glue("Analysing log {logFile}..."))
   lines <- tibble(Line = readLines(logFile))
 
